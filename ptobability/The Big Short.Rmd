@@ -1,0 +1,318 @@
+---
+title: "The Big Short"
+author: "Lucas Varela"
+date: "`r Sys.Date()`"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+set.seed(061102)
+library(tidyverse)
+library(dslabs)
+data(death_prob)
+```
+
+## Introduction
+
+In this example we discuss how **discrete** and **continuous** probability concepts relate to bank loans and interest rates. A problem similar to the one faced by the insurance industry.
+
+Just as banks must decide how much interest on loans charge based on estimates of loan defaults, insurance companies must decide how much to charge as premiums for policies given estimates of the probability that an individual will collect that policy.
+
+## Data
+
+The data used in this example comes from [2015 US Period Life Tables](https://www.ssa.gov/oact/STATS/table4c6.html). A period life table is based on the mortality experience of a population during a short period of time.
+
+This data is loaded from the `dslabs` library, here's a glimpse of the dataset:
+
+```{r echo=TRUE, warning=FALSE}
+head(death_prob)
+```
+
+## Interest Rates
+
+Imagine there's a bank that tries to identify potential homeowners that can be trusted to make payments. Historically, only 2% of the customers don't pay back the money lent. Due to this 2%, the bank will lose money if there's no interest in the loans.
+
+Suppose the bank will give 1,000 loans of \$180,000, adding costs of operations each loan costs the bank \$200,000. A sampling model for this scenario would look like this:
+
+```{r echo=TRUE}
+n <- 1000
+loss_per_loan <- -200000
+p <- 0.02
+defaults <- sample( c(0,1), n, prob=c(1-p, p), replace = TRUE)
+sum(defaults * loss_per_loan)
+```
+
+Note that the total loss defined by the total sum is a random variable, meaning that every time you run the code you will get a different answer. Obviously this occurs cause there's a **probability** of a client not paying, is not a sure thing.
+
+We can create a **Monte Carlo simulation** and plot the results to have an idea of the distribution of this random variable:
+
+```{r}
+B <- 10000
+losses <- replicate(B, {
+    defaults <- sample( c(0,1), n, prob=c(1-p, p), replace = TRUE) 
+  sum(defaults * loss_per_loan)
+})
+
+data.frame(losses_in_millions = losses/10^6) %>%
+    ggplot(aes(losses_in_millions)) +
+    geom_histogram(binwidth = 0.6, col = "black")
+```
+
+We don't need a Monte Carlo simulation, the **Central Limit Theorem** tells us that because our losses are a sum of **independent draws**, the distribution is approximately normal with expected value `n*(p*loss_per_loan + (1-p)*0)` and standard error `sqrt(n)*abs(loss_per_loan)*sqrt(p*(1-p))`
+
+Now we can set an interest rate that gets us an expected value equal to 0. If we define $l$ as our **loss per loan** and $x$ as the quantity that we need to add to each loan (which in this case are represented by draws), this would be the formula to get an expected value of 0:
+
+$$
+l*p + x(1-p) = 0
+$$
+
+$$
+x(1-p) = -(l*p)
+$$
+
+$$
+x = -\,\,\frac{l*p}{1-p}
+$$
+
+And if we add our values to this function:
+
+$$
+x = -\,\,\frac{200000*0.02}{1-0.02}
+$$
+
+$$
+x = -\,\,\frac{4000}{0.98}
+$$
+
+This gives us about $4081$, which represents an interest rate of approximately **2%**. The problem is that although this interest rate guarantees on average the bank will break even, there's a 50% chance that the bank will lose money.
+
+So we need to choose an interest rate high enough that lowers the probability of losing money, but low enough so the customers don't decide to go to another bank. Let's set the probability of losing money to **1 in 100**.
+
+The goal is to calculate the value of $x$ for which the probability of the sum (let's call it **S**) being less than 0 (losing money) is 0.01:
+
+$$
+Pr(S<0) = 0.01
+$$
+
+The expected value $E[S]$ of the sum of $n = 1000$ loans given our definitions of $x$, $l$ and $p$ is:
+
+$$
+\mu_S = (l*p \,\, + \,\,  x(1-p)) * n
+$$
+
+And the standard error $SE[S]$ of the sum is:
+
+$$
+\sigma_S = |x-l| * \sqrt{n*p*(1-p)} 
+$$
+
+Knowing that a **z-score**, a standard score that measures how many standard deviations a data point is from the mean of the dataset, is defined as $$Z = \frac{x - \mu}{\sigma}$$ (with $x$ being the data point), we can **subtract the expected value** ($\mu$) and **divide by the expected value** ($\sigma$) to both sides of the previous equation:
+
+$$
+Pr(\frac{S-\mu_S}{\sigma_S} < \frac{0-\mu_S}{\sigma_S}) = 0.01
+$$
+
+The equation on the left of the $<$ now represents a **z-score**, which now we rename as $Z$.
+
+$$
+Pr(Z < \frac{0-\mu_S}{\sigma_S}) = 0.01
+$$
+
+And removing the $0$ from the equation on the right of the $<$ gives us:
+
+$$
+Pr(Z < \frac{-\mu_S}{\sigma_S}) = 0.01
+$$
+
+Now we can replace the $\mu_S$ and $\sigma_S$ with the previous formulas set for **expected value** and **standard deviation** of **S**:
+
+$$
+Pr(Z < \frac{-\,\,\,((l*p \,\, + \,\,  x(1-p)) * n)}{|x-l| * \sqrt{n*p*(1-p)}}) = 0.01
+$$
+
+To make the explanation easier let's rename the right side of the function as $z$ :
+
+$$
+Pr(Z<z) = 0.01
+$$
+
+Remember $Z$ is a z-**score**, a standardized normal random variable with $\mu = 0$ and $\sigma = 1$. The formula created means that the probability that the standard normal variable $Z$ is less than some value $z$ is $0.01$. In other words, $z$ is the first percentile ($0.01$ or $1\%$) of the standard normal distribution.
+
+In R we have the function `qnorm()` that for a given probability $p$ it returns the **z-value** for which the cumulative probability is $p$.
+
+For example, `qnorm(0.5)` would return 0, since the 50th percentile (median) of a standard normal distribution is 0. Here's the code:
+
+```{r echo=TRUE, message=FALSE, warning=FALSE}
+qnorm(0.5)
+```
+
+So for $p=0.01$ (1st percentile), `qnorm(0.01)` returns the **z-value** where $Pr(Z<z) = 0.01$, which would be `-2.32`.
+
+```{r echo=TRUE, message=FALSE, warning=FALSE}
+qnorm(0.01)
+```
+
+This means that the right side of the complicated equation must be equal to `qnorm(0.01)`, leaving us this formula:
+
+$$
+\frac{-\,\,\,((l*p \,\, + \,\,  x(1-p)) * n)}{|x-l| * \sqrt{n*p*(1-p)}} = z
+$$
+
+Solving for $x$ gives us:
+
+$$
+x = -l*\frac{n*p-z*\sqrt{n*p*(1-p)}}{n(1-p)+z*\sqrt{n*p*(1-p)}}
+$$
+
+Which we can solve pretty easily in R:
+
+```{r echo=TRUE, message=FALSE, warning=FALSE}
+l <- loss_per_loan
+z <- qnorm(0.01)
+x <- -l*( n*p - z*sqrt(n*p*(1-p)))/ ( n*(1-p) + z*sqrt(n*p*(1-p)))
+x
+```
+
+This gives us $x=6249$, which is approximately a **3%** interest per loan (`x/180000 = 0.0347`).
+
+By choosing a **3%** interest rate, we now have an expected profit per loan of about \$2124, which is a total expected profit of about **\$2 million**.
+
+```{r echo=TRUE, message=FALSE, warning=FALSE}
+loss_per_loan*p + x*(1-p)
+```
+
+We can run a Monte Carlo simulation and check the theoretical approximation done.
+
+```{r echo=TRUE, message=FALSE, warning=FALSE}
+B <- 100000
+profit <- replicate(B, {
+    draws <- sample( c(x, loss_per_loan), n, 
+                        prob=c(1-p, p), replace = TRUE) 
+    sum(draws)
+})
+mean(profit)    # expected value of the profit over n loans
+mean(profit<0)    # probability of losing money
+```
+
+Note that the simulation also gives us a **1%** (`0.01254`) probability of losing money, just like our theory.
+
+## The Big Short Case
+
+One of the bank's employees points out that since the bank is making about \$2000 per loan, the bank should give out more loans. The boss explains that it was hard to find those reliable and predictable clients, mantaining the probability of default low.
+
+The employee points out that even if the probability of default gets higher, as long as your expected value is positive, you can minimize your chances of losing money by increasing $n$ (number of loans), relying on the law of large numbers.
+
+Let's say the probability of default goes up to **4%**, if we set the interest rate to **5%** we are guaranteed a positive expected value of \$640 per loan:
+
+```{r echo=TRUE, message=FALSE, warning=FALSE}
+p <- .04
+loss_per_loan <- -200000
+r <- 0.05
+x <- r*180000
+loss_per_loan*p + x*(1-p)
+```
+
+And we can minimize our chances of losing money by simply increasing the number of loans ($n$), since:
+
+$$
+Pr(S<0) = Pr(Z<-\frac{E[S]}{SE[S]}) = Pr(Z<z)
+$$
+
+If $\mu$ is the expected value of the urn (one loan) and $\sigma$ is the standard deviation of the urn (one lone), then $E[S] = n*\mu$ and $SE[S]=\sqrt{n*\sigma}$ . Let's translate that to the $z$ formula:
+
+$$
+z = -\frac{E[S]}{SE[S]}
+$$
+
+$$
+z = -\frac{n*\mu}{\sqrt{n*\sigma}} = -\frac{\sqrt{n*\mu}}{\sigma}
+$$
+
+To find the value of $n$ for which $z$ is less than or equal to our desired value, we take $z\le -\frac{\sqrt{n*\mu}}{\sigma}$, and solve for $n$:
+
+$$
+z * \sigma \le -\sqrt{n*\mu}
+$$
+
+$$
+(z * \sigma)^2 \le (-\sqrt{n*\mu})^2
+$$
+
+$$
+(z * \sigma)^2 \le \sqrt{n*\mu}
+$$
+
+$$
+\frac{(z * \sigma)^2}{\mu} \le n
+$$
+
+$$
+n \ge \frac{(z * \sigma)^2}{\mu}
+$$
+
+So if $n \ge z^2 \sigma^2 / \mu^2$, we are guaranteed to have a probability of less than 0.01 of losing money.
+
+The implication is that as long as $\mu$ is positive, we can find an $n$ that minimizes the probability of a loss. This is a form of the **Law of Large Numbers**. When $n$ is large our average earning per loan converges to the expected earning $\mu$.
+
+With $x$ is fixed, now we can ask what $n$ do we need for the probability to be 0.01? If we run the calculation we get that $n$ has to be **22163 loans**:
+
+```{r echo=TRUE, message=FALSE, warning=FALSE}
+z <- qnorm(0.01)
+l <- loss_per_loan
+n <- ceiling((z^2*(x-l)^2*p*(1-p))/(l*p + x*(1-p))^2)
+n    # number of loans required
+n*(loss_per_loan*p + x * (1-p))    # expected profit over n loans
+```
+
+And we can expect a profit of about **\$14 million**.
+
+We can confirm this with a Monte Carlo simulation:
+
+```{r echo=TRUE, message=FALSE, warning=FALSE}
+B <- 10000
+p <- 0.04
+x <- 0.05 * 180000
+profit <- replicate(B, {
+    draws <- sample( c(x, loss_per_loan), n, 
+                        prob=c(1-p, p), replace = TRUE) 
+    sum(draws)
+})
+mean(profit<0)
+mean(profit)
+```
+
+So both in theory and simulation this plan seems like a no brainer. The employee decides to leave the bank and start his own mortgage company, after a couple months his bank has gone bankrupt. **What happened?**
+
+The employee's scheme was based in part on the formula $SE[(X_1+X_2+...+X_n)/n] = \sigma/\sqrt{n}$. By making $n$ large, we minimize the standard error of our per-loan profit.
+
+But for this rule to hold, the X's must be independent draws. The fact that one person defaults **must be independent** of other people defaulting.
+
+To make the employee's model more realistic, let's imagine there could be a global event that affects everybody with high-risk mortgages, and changes their probability. We will assume that with a **50-50** chance, all the probabilities go up or down slightly to somewhere between **0.03 and 0.05**. But this happens to everybody at once, not just one person.
+
+```{r}
+B <- 10000
+p <- 0.04
+x <- 0.05*180000
+profit <- replicate(B, {
+    new_p <- 0.04 + sample(seq(-0.01, 0.01, length = 100), 1)
+    draws <- sample( c(x, loss_per_loan), n, 
+                        prob=c(1-new_p, new_p), replace = TRUE)
+    sum(draws)
+})
+mean(profit)    # expected profit
+mean(profit < 0)    # probability of losing money
+mean(profit < -10000000)    # probability of losing over $10 million
+```
+
+Although our expected profit it's still **14 million**, the probability of the bank having a negative earning goes up to **34.7%**. Even worse the probability of losing more than **\$10 million** is **24%**. Here's the distribution:
+
+```{r echo=TRUE, message=FALSE, warning=FALSE}
+data.frame(profit_in_millions = profit/10^6) %>%
+	ggplot(aes(profit_in_millions)) +
+	geom_histogram(col = "black", bins = 27)
+```
+
+It doesn't look like a normal distribution at all. The theory completely breaks down and our random variable has much more variability than expected.
+
+The 2007 financial meltdown was due, among other things, to financial experts assuming independence when there wasn't.
